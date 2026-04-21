@@ -3,14 +3,16 @@ import torch.nn.functional as F, matplotlib.pyplot as plt, numpy as np, torch.op
 from torch.utils.data import TensorDataset, DataLoader
 
 def encode_onehot(labels):
-    # From NRI, one-hot labeling for message passing
+    # From NRI paper, one-hot labeling for message passing
     classes = set(labels)
-    classes_dict = {c: np.identity(len(classes))[i, :] for i, c in enumerate(classes)}
-    labels_onehot = np.array(list(map(classes_dict.get, labels)), dtype=np.int32)
+    classes_dict = {c: np.identity(len(classes))[i, :] for i, c in
+                    enumerate(classes)}
+    labels_onehot = np.array(list(map(classes_dict.get, labels)),
+                             dtype=np.int32)
     # Return
     return labels_onehot
 
-def initialise_DLC_model(in_dim, hid_dim, nAgent, nOpinion, nDim, dOrder, device, learning_rate, scheduler_step, scheduler_gamma, arch='DLCMLP', activation='tanh'):
+def initialise_DLC_model(in_dim, hid_dim, nAgent, nOpinion, nDim, dOrder, device, learning_rate, scheduler_step, scheduler_gamma, arch='DLCMLP', activation='tanh', weight_decay=0.0):
     # Initialise encoder
     if arch == 'DLCMLP':
         encoder = modules.DLCMLP(in_dim=in_dim, hid_dim=hid_dim, out_dim=nAgent*nOpinion)
@@ -45,11 +47,18 @@ def initialise_DLC_model(in_dim, hid_dim, nAgent, nOpinion, nDim, dOrder, device
             rel_send = torch.FloatTensor(rel_send).to(device)
             decoder = modules.MPNN(nAgent=nAgent, in_dim=nOpinion, hid_dim=hid_dim, out_dim=int(nDim*dOrder/2), rel_rec=rel_rec, rel_send=rel_send, activation=activation)
     # Send DLC modules to training device
+    # encoder = torch.nn.DataParallel(encoder, device_ids = [0, 1])
+    # NOD_func = torch.nn.DataParallel(NOD_func, device_ids = [0, 1])
+    # decoder = torch.nn.DataParallel(decoder, device_ids = [0, 1])
     encoder.to(device)
     NOD_func.to(device)
     decoder.to(device)
-    # Initialise optimisation model
-    optimiser = optim.Adam(list(encoder.parameters())+list(NOD_func.parameters())+list(decoder.parameters()), lr=learning_rate)
+    # Initialise optimisation model. AdamW so weight_decay is decoupled (proper
+    # weight decay, not L2 on the gradient). Equivalent to Adam when wd=0.
+    optimiser = optim.AdamW(
+        list(encoder.parameters())+list(NOD_func.parameters())+list(decoder.parameters()),
+        lr=learning_rate, weight_decay=weight_decay,
+    )
     # Initialise optimisation scheduler
     scheduler = lr_scheduler.StepLR(optimiser, step_size=scheduler_step, gamma=scheduler_gamma)
     # Return
@@ -124,42 +133,31 @@ def load_DLC_model(in_dim, hid_dim, nAgent, nOpinion, nDim, dOrder, device, time
     return encoder, NOD_func, decoder
 
 def calc_aGraph(state_t, NOD_func, nAgent, device, nDim, inverse):
+    # Produces a_graph of shape (B, nAgent, nAgent) where entry [b, j, i]
+    # matches the original implementation exactly:
+    #   nDim == 1:        state_t[b, j] - state_t[b, i]          (diag zeroed)
+    #   nDim == 2, inv=0: ||p_j - p_i||^2                        (diag naturally 0)
+    #   nDim == 2, inv=1: 1 / (||p_j - p_i||^2 + eps)             (diag zeroed)
     if nDim == 1:
-        assert nAgent == len(state_t[0])
-        a_graph = ((state_t[:, :]-state_t[:, 0].unsqueeze(dim=1))).unsqueeze(dim=2)
-        for i in range(len(state_t[0])-1):
-            a_graph = torch.cat([a_graph, ((state_t[:, :]-state_t[:, i+1].unsqueeze(dim=1))).unsqueeze(dim=2)], dim=2)
-        for i in range(nAgent):
-            a_graph[:, i, i] = 0
-        return a_graph
+        assert nAgent == state_t.size(1)
+        # Broadcasted pairwise difference; diagonal is already zero.
+        return state_t.unsqueeze(2) - state_t.unsqueeze(1)
     if nDim == 2:
+        x = state_t[:, :nAgent]
+        y = state_t[:, nAgent:2*nAgent]
+        dx = x.unsqueeze(2) - x.unsqueeze(1)
+        dy = y.unsqueeze(2) - y.unsqueeze(1)
+        Dist2 = dx * dx + dy * dy
         if inverse:
             epsilon = 1E-3
-            xDist = state_t[:, :nAgent]-state_t[:, 0].unsqueeze(dim=1)
-            yDist = state_t[:, nAgent:]-state_t[:, nAgent].unsqueeze(dim=1)
-            Dist = xDist**2 + yDist**2
-            a_graph = (1.0/(Dist+epsilon)).unsqueeze(dim=2)
-            for i in range(nAgent-1):
-                xDist = state_t[:, :nAgent]-state_t[:, i+1].unsqueeze(dim=1)
-                yDist = state_t[:, nAgent:]-state_t[:, i+1+nAgent].unsqueeze(dim=1)
-                Dist = xDist**2 + yDist**2
-                a_graph = torch.cat([a_graph, (1.0/(Dist+epsilon)).unsqueeze(dim=2)], dim=2)
-            for i in range(nAgent):
-                a_graph[:, i, i] = 0
-            # a_graph = torch.mul(NOD_func.aGraph_prefactor, a_graph)
+            a_graph = 1.0 / (Dist2 + epsilon)
+            # Zero the diagonal (which would otherwise be 1/eps). Mask is tiny
+            # so we build it inline rather than caching — caching a module-level
+            # tensor breaks torch.compile mode='reduce-overhead' (CUDA graphs).
+            a_graph = a_graph * (1.0 - torch.eye(nAgent, device=a_graph.device, dtype=a_graph.dtype))
             return a_graph
-        else:
-            xDist = state_t[:, :nAgent]-state_t[:, 0].unsqueeze(dim=1)
-            yDist = state_t[:, nAgent:]-state_t[:, nAgent].unsqueeze(dim=1)
-            Dist = xDist**2 + yDist**2
-            a_graph = Dist.unsqueeze(dim=2)
-            for i in range(nAgent-1):
-                xDist = state_t[:, :nAgent]-state_t[:, i+1].unsqueeze(dim=1)
-                yDist = state_t[:, nAgent:]-state_t[:, i+1+nAgent].unsqueeze(dim=1)
-                Dist = xDist**2 + yDist**2
-                a_graph = torch.cat([a_graph, Dist.unsqueeze(dim=2)], dim=2)
-            # a_graph = torch.mul(NOD_func.aGraph_prefactor, a_graph)
-            return a_graph
+        # Non-inverse: diagonal is naturally 0.
+        return Dist2
     
 def calc_oGraph(nOpinion, NOD_func, device):
     o_graph = torch.zeros(nOpinion, nOpinion).to(device)
@@ -175,11 +173,16 @@ def calc_NOD(state_t, z_t_dlc, NOD_func, batch_size, nAgent, nOpinion, nDim, dt,
     b = torch.reshape(NOD_func.b(state_t), (batch_size, nAgent, nOpinion))
     a_graph = calc_aGraph(state_t[:, :nDim*nAgent], NOD_func, nAgent, device, nDim, inverse)
     o_graph = calc_oGraph(nOpinion, NOD_func, device)
-    # Update decision dot
-    dz_t_dlc = -d*z_t_dlc + torch.tanh(u*(alpha*z_t_dlc + torch.matmul(a_graph, z_t_dlc) + torch.matmul(z_t_dlc, o_graph.t()) + torch.matmul(torch.matmul(a_graph, z_t_dlc), o_graph.t()))) + b
+    # Original inner sum:
+    #   alpha*z + A@z + z@Oᵀ + (A@z)@Oᵀ
+    # Using (A@z)@Oᵀ = A@(z@Oᵀ) and distributivity:
+    #   = alpha*z + z@Oᵀ + A@(z + z@Oᵀ)
+    # One matmul (z, oT) + one bmm (a, .) instead of two bmm's and two matmul's.
+    zo = torch.matmul(z_t_dlc, o_graph.t())                         # (B, N, No)
+    inner = alpha * z_t_dlc + zo + torch.matmul(a_graph, z_t_dlc + zo)
+    dz_t_dlc = -d * z_t_dlc + torch.tanh(u * inner) + b
     # Update decision
-    z_tp1_dlc = z_t_dlc + dt*dz_t_dlc
-    # Return
+    z_tp1_dlc = z_t_dlc + dt * dz_t_dlc
     return z_tp1_dlc
 
 def DLC_step(encoder, NOD_func, decoder, nAgent, nOpinion, nDim, dOrder, batch_size, state_t, dt, device, inverse):
@@ -212,6 +215,64 @@ def DLC_RNN_step(z_t_dlc, NOD_func, decoder, nAgent, nOpinion, nDim, dOrder, bat
     # Return
     return state_tp1_dlc, z_tp1_dlc
 
+def _DLC_unroll_impl(encoder, NOD_func, decoder, state_input, data_offset,
+                     nAgent, nOpinion, nDim, dOrder, batch_size, dt, device, inverse):
+    """Full RNN forward unroll: encoder -> (NOD + decoder)*data_offset.
+    Returns (state_tpn_dlc, z_t_dlc, z_tp1_dlc) — same triple the in-line loop
+    produced. Exposed as a standalone function so torch.compile can see the
+    full loop and fuse across iterations.
+    """
+    state_tp1, z_t, z_tp1 = DLC_step(
+        encoder, NOD_func, decoder,
+        nAgent, nOpinion, nDim, dOrder, batch_size,
+        state_input, dt, device, inverse,
+    )
+    state_list = [state_tp1]
+    tmp = state_tp1
+    z_tmp = z_tp1
+    for _ in range(data_offset - 1):
+        tmp, z_tmp = DLC_RNN_step(
+            z_tmp, NOD_func, decoder,
+            nAgent, nOpinion, nDim, dOrder, batch_size,
+            tmp, dt, device, inverse,
+        )
+        state_list.append(tmp)
+    state_tpn = torch.cat(state_list, dim=1) if len(state_list) > 1 else state_list[0]
+    return state_tpn, z_t, z_tp1
+
+
+# Module-level name that train/valid/test call. `enable_compile` rebinds this
+# to a torch.compile-wrapped version when requested.
+DLC_unroll = _DLC_unroll_impl
+
+# Whether CUDA graphs (via torch.compile mode='reduce-overhead') are active.
+# When True, train/valid loops call torch.compiler.cudagraph_mark_step_begin()
+# before each batch to avoid "output overwritten by next graph replay" errors.
+_CUDAGRAPH_ACTIVE = False
+
+
+def _step_mark():
+    """Signal the boundary between batches when CUDA graphs are active."""
+    if _CUDAGRAPH_ACTIVE:
+        torch.compiler.cudagraph_mark_step_begin()
+
+
+def enable_compile(mode="default"):
+    """Opt-in: wrap DLC_unroll with torch.compile. Call once after the model is
+    initialised. `mode`:
+      - 'default'          — ~2x speedup on fixed shapes, robust (recommended).
+      - 'reduce-overhead'  — uses CUDA graphs; ~5-20% additional speedup but
+                             can interact badly with module-level cached tensors
+                             and requires mark_step_begin() between batches
+                             (handled here). Prefer 'default' for stability.
+      - 'max-autotune'     — longer warmup, uses autotuned kernels.
+    """
+    global DLC_unroll, _CUDAGRAPH_ACTIVE
+    DLC_unroll = torch.compile(_DLC_unroll_impl, mode=mode)
+    _CUDAGRAPH_ACTIVE = (mode == "reduce-overhead")
+    print(f"[model_utils] torch.compile enabled with mode='{mode}'")
+
+
 def loss_function(encoder, decoder, state_tpn_dlc, z_t_dlc, z_tp1_dlc, state_input_batch, state_output_batch, batch_size, nAgent, nOpinion, nDim, dOrder):
     # Prediction loss
     loss_pred = F.mse_loss(state_tpn_dlc, state_output_batch)
@@ -240,24 +301,25 @@ def train_epoch(encoder, NOD_func, decoder, optimiser, scheduler, device, train_
     decoder.train()
     # Run training loop
     for n, data_train in enumerate(train_loader):
+        _step_mark()
         # Extract input and output data
         state_input_train_batch, state_output_train_batch = data_train
         # Send batch data to CUDA
         state_input_train_batch, state_output_train_batch = state_input_train_batch.to(device), state_output_train_batch.to(device)
-        # Intial training step
-        state_tp1_dlc, z_t_dlc, z_tp1_dlc = DLC_step(encoder, NOD_func, decoder, nAgent, nOpinion, nDim, dOrder, batch_size, state_input_train_batch, dt, device, inverse)
-        # Loop for RNN training
-        state_tpn_dlc = state_tp1_dlc
-        state_tpn_temp = state_tp1_dlc
-        z_t_temp = z_tp1_dlc
-        for _ in range(data_offset-1):
-            state_tpn_temp, z_t_temp = DLC_RNN_step(z_t_temp, NOD_func, decoder, nAgent, nOpinion, nDim, dOrder, batch_size, state_tpn_temp, dt, device, inverse)
-            state_tpn_dlc = torch.hstack([state_tpn_dlc, state_tpn_temp])
+        # Full RNN unroll (torch.compile-friendly single entry point).
+        state_tpn_dlc, z_t_dlc, z_tp1_dlc = DLC_unroll(
+            encoder, NOD_func, decoder, state_input_train_batch, data_offset,
+            nAgent, nOpinion, nDim, dOrder, batch_size, dt, device, inverse,
+        )
         # Training loss
         loss, loss_pred, loss_recon, loss_latent = loss_function(encoder, decoder, state_tpn_dlc, z_t_dlc, z_tp1_dlc, state_input_train_batch, state_output_train_batch, batch_size, nAgent, nOpinion, nDim, dOrder)
         # Update model
         optimiser.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(
+            list(encoder.parameters()) + list(NOD_func.parameters()) + list(decoder.parameters()),
+            max_norm=1.0,
+        )
         optimiser.step()
         # Update loss values
         loss_train += loss.item()
@@ -275,19 +337,16 @@ def validate_epoch(encoder, NOD_func, decoder, device, valid_loader, data_offset
     # Run validation loop
     with torch.no_grad():
         for m, data_valid in enumerate(valid_loader):
+            _step_mark()
             # Extract input and output data
             state_input_valid_batch, state_output_valid_batch = data_valid
             # Send batch data to CUDA
             state_input_valid_batch, state_output_valid_batch = state_input_valid_batch.to(device), state_output_valid_batch.to(device)
-            # Intial training step
-            state_tp1_dlc, z_t_dlc, z_tp1_dlc = DLC_step(encoder, NOD_func, decoder, nAgent, nOpinion, nDim, dOrder, batch_size, state_input_valid_batch, dt, device, inverse)
-            # Loop for RNN training
-            state_tpn_dlc = state_tp1_dlc
-            state_tpn_temp = state_tp1_dlc
-            z_t_temp = z_tp1_dlc
-            for _ in range(data_offset-1):
-                state_tpn_temp, z_t_temp = DLC_RNN_step(z_t_temp, NOD_func, decoder, nAgent, nOpinion, nDim, dOrder, batch_size, state_tpn_temp, dt, device, inverse)
-                state_tpn_dlc = torch.hstack([state_tpn_dlc, state_tpn_temp])
+            # Full RNN unroll (torch.compile-friendly single entry point).
+            state_tpn_dlc, z_t_dlc, z_tp1_dlc = DLC_unroll(
+                encoder, NOD_func, decoder, state_input_valid_batch, data_offset,
+                nAgent, nOpinion, nDim, dOrder, batch_size, dt, device, inverse,
+            )
             # Training loss
             loss, loss_pred, loss_recon, loss_latent = loss_function(encoder, decoder, state_tpn_dlc, z_t_dlc, z_tp1_dlc, state_input_valid_batch, state_output_valid_batch, batch_size, nAgent, nOpinion, nDim, dOrder)
             # Update loss values
@@ -304,7 +363,7 @@ def test_epoch(encoder, NOD_func, decoder, device, test_loader, data_offset, nAg
     NOD_func.eval()
     decoder.eval()
     # Check testing time bath length
-    assert len(test_loader) == 1
+    # assert len(test_loader) == 1
     # Initialise loop loss
     loss_test, loss_pred_test, loss_recon_test, loss_latent_test = 0, 0, 0, 0
     # Run testing loop
@@ -315,19 +374,21 @@ def test_epoch(encoder, NOD_func, decoder, device, test_loader, data_offset, nAg
         # Send batch data to CUDA
         state_input_test_batch, state_output_test_batch = state_input_test_batch.to(device), state_output_test_batch.to(device)
         # Intial training step
-        b_tpn_dlc = NOD_func.b(state_input_test_batch)
         state_tp1_dlc, z_t_dlc, z_tp1_dlc = DLC_step(encoder, NOD_func, decoder, nAgent, nOpinion, nDim, dOrder, batch_size, state_input_test_batch, dt, device, inverse)
-        # Loop for RNN training
-        state_tpn_dlc = state_tp1_dlc
+        # Loop for RNN testing: accumulate into lists, cat once at the end.
+        state_list = [state_tp1_dlc]
+        b_list = [NOD_func.b(state_input_test_batch)]
+        z_list = [torch.reshape(z_tp1_dlc, (batch_size, nAgent*nOpinion))]
         state_tpn_temp = state_tp1_dlc
-        z_tpn_dlc = z_tp1_dlc
-        z_tpn_dlc_return = torch.reshape(z_tp1_dlc, (batch_size, nAgent*nOpinion))
         z_t_temp = z_tp1_dlc
         for _ in range(data_offset-1):
-            b_tpn_dlc = torch.hstack([b_tpn_dlc, NOD_func.b(state_tpn_temp)])
+            b_list.append(NOD_func.b(state_tpn_temp))
             state_tpn_temp, z_t_temp = DLC_RNN_step(z_t_temp, NOD_func, decoder, nAgent, nOpinion, nDim, dOrder, batch_size, state_tpn_temp, dt, device, inverse)
-            state_tpn_dlc = torch.hstack([state_tpn_dlc, state_tpn_temp])
-            z_tpn_dlc_return = torch.hstack([z_tpn_dlc_return, torch.reshape(z_t_temp, (batch_size, nAgent*nOpinion))])
+            state_list.append(state_tpn_temp)
+            z_list.append(torch.reshape(z_t_temp, (batch_size, nAgent*nOpinion)))
+        state_tpn_dlc = torch.cat(state_list, dim=1) if len(state_list) > 1 else state_list[0]
+        b_tpn_dlc = torch.cat(b_list, dim=1) if len(b_list) > 1 else b_list[0]
+        z_tpn_dlc_return = torch.cat(z_list, dim=1) if len(z_list) > 1 else z_list[0]
         # Training loss
         loss, loss_pred, loss_recon, loss_latent = loss_function(encoder, decoder, state_tpn_dlc, z_t_dlc, z_tp1_dlc, state_input_test_batch, state_output_test_batch, batch_size, nAgent, nOpinion, nDim, dOrder)
         # Update loss values

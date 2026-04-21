@@ -6,8 +6,10 @@ import torch.nn.functional as F, numpy as np, matplotlib.pyplot as plt
 def encode_onehot(labels):
     # From NRI paper, one-hot labeling for message passing
     classes = set(labels)
-    classes_dict = {c: np.identity(len(classes))[i, :] for i, c in enumerate(classes)}
-    labels_onehot = np.array(list(map(classes_dict.get, labels)), dtype=np.int32)
+    classes_dict = {c: np.identity(len(classes))[i, :] for i, c in
+                    enumerate(classes)}
+    labels_onehot = np.array(list(map(classes_dict.get, labels)),
+                             dtype=np.int32)
     # Return
     return labels_onehot
     
@@ -54,9 +56,11 @@ class NonlinearOpinionDynamics(nn.Module):
         self.u = torch.nn.Parameter(torch.distributions.Normal(0, 1).sample((nAgent, 1)))
         # Belief graph parameters
         self.oGraph_upper = torch.nn.Parameter(torch.distributions.Normal(0, 1).sample((int(nOpinion*(nOpinion-1)/2),)))
-        self.oGraph_upper_index = torch.triu_indices(nOpinion, nOpinion, 1)
         self.oGraph_lower = torch.nn.Parameter(torch.distributions.Normal(0, 1).sample((int(nOpinion*(nOpinion-1)/2),)))
-        self.oGraph_lower_index = torch.tril_indices(nOpinion, nOpinion, -1)
+        # Register indices as buffers (not plain attrs) so they move with .to(device).
+        # persistent=False keeps them out of state_dict for backward compat.
+        self.register_buffer("oGraph_upper_index", torch.triu_indices(nOpinion, nOpinion, 1), persistent=False)
+        self.register_buffer("oGraph_lower_index", torch.tril_indices(nOpinion, nOpinion, -1), persistent=False)
         # Communication graph parameters
         self.aGraph_prefactor = torch.nn.Parameter(torch.distributions.Normal(0, 1).sample((nAgent, nAgent)))
     
@@ -100,32 +104,39 @@ class MPNN(nn.Module):
         self.MPMLP1 = MPMLP(in_dim, hid_dim, hid_dim, activation)
         self.MPMLP2 = MPMLP(2*hid_dim, hid_dim, hid_dim, activation)
         self.MPMLP3 = MPMLP(hid_dim, hid_dim, out_dim, activation)
+        # Kept for backward compat (not used in forward anymore).
         self.rel_rec = rel_rec
         self.rel_send = rel_send
+        # rel_rec / rel_send are one-hot matrices, so matmul with them is a
+        # gather. Precompute the integer indices and use index_select / scatter
+        # instead — removes dozens of cuBLAS launches per RNN step.
+        # persistent=False keeps these out of state_dict so old checkpoints load.
+        self.register_buffer("recv_idx", rel_rec.argmax(dim=1).long(), persistent=False)
+        self.register_buffer("send_idx", rel_send.argmax(dim=1).long(), persistent=False)
 
     def edge2node(self, x):
-        incoming = torch.matmul(self.rel_rec.t(), x)
-        return incoming/incoming.size(1)
+        # x: (B, E, d) -> (B, N, d); out[b, n] = sum_{e : recv[e]=n} x[b, e]
+        # then divided by N (matches original division by incoming.size(1)).
+        B, E, d = x.shape
+        idx = self.recv_idx.view(1, E, 1).expand(B, E, d)
+        incoming = x.new_zeros(B, self.nAgent, d)
+        incoming.scatter_add_(1, idx, x)
+        return incoming / self.nAgent
 
     def node2edge(self, x):
-        receivers = torch.matmul(self.rel_rec, x)
-        senders = torch.matmul(self.rel_send, x)
-        edges = torch.cat([senders, receivers], dim=2)
-        return edges
+        # x: (B, N, d) -> (B, E, 2d) via pure index_select (one-hot matmul).
+        senders = x.index_select(1, self.send_idx)
+        receivers = x.index_select(1, self.recv_idx)
+        return torch.cat([senders, receivers], dim=2)
     
     def dataloader2MPNN(self, x_dl):
-        # Convert DLC dataloader structure to work with MPNN data structure
-        x_MPNN = x_dl[:, 0::self.nAgent].view(x_dl.size(0), 1, self.in_dim)
-        for i in range(1, self.nAgent):
-            x_MPNN = torch.cat([x_MPNN, x_dl[:, i::self.nAgent].view(x_dl.size(0), 1, self.in_dim)], dim=1)
-        return x_MPNN
-    
+        # x_dl layout: [d0a0, d0a1, ..., d0a_{N-1}, d1a0, ..., d_{D-1}a_{N-1}]
+        # Target (B, N, D) with [b, a, d] = x_dl[b, d*N + a].
+        return x_dl.view(x_dl.size(0), self.in_dim, self.nAgent).transpose(1, 2).contiguous()
+
     def MPNN2dataloader(self, x_MPNN):
-        # Convert MPNN data structure back into DLC dataloader structure
-        x_dl = x_MPNN[:, :, 0].view(x_MPNN.size(0), self.nAgent)
-        for i in range(1, self.out_dim):
-            x_dl = torch.cat([x_dl, x_MPNN[:, :, i].view(x_MPNN.size(0), self.nAgent)], dim=1)
-        return x_dl
+        # Inverse of dataloader2MPNN for (B, N, out_dim) -> (B, out_dim * N).
+        return x_MPNN.transpose(1, 2).contiguous().view(x_MPNN.size(0), self.out_dim * self.nAgent)
 
     def forward(self, inputs):
         x = self.dataloader2MPNN(inputs)
