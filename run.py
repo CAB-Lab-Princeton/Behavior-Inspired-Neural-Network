@@ -1,11 +1,11 @@
 import torch, numpy as np, matplotlib.pyplot as plt
 import tqdm, random, argparse, time, sys
 
-from model_utils import train_epoch, test_epoch, validate_epoch, initialise_DLC_model, save_DLC_model, load_DLC_model
+from model_utils import train_epoch, test_epoch, validate_epoch, initialise_DLC_model, save_DLC_model, load_DLC_model, enable_compile
 from plot_utils import plot_loss_figure, print_lowest_loss, print_NOD_parameters, plot_test, write_sh, append_loss
 from data_utils import load_dataset
 
-torch.autograd.set_detect_anomaly(True)
+torch.autograd.set_detect_anomaly(False)
 CUDA_percision = "highest"
 torch.set_float32_matmul_precision(CUDA_percision)
 if CUDA_percision == "highest":
@@ -64,6 +64,7 @@ def main(args):
     epoch = args["epoch"]
     arch= args["arch"]
     learning_rate = args["learning_rate"]
+    weight_decay = args["weight_decay"]
     batch_size = args["batch_size"]
     scheduler_step = args["scheduler_step"]
     scheduler_gamma = args["scheduler_gamma"]
@@ -84,12 +85,21 @@ def main(args):
     dOrder = args["dOrder"]
     in_dim = dOrder*nAgent*nDim
     hid_dim = args["hid_dim"]
+    # Optional: enable torch.compile on the RNN unroll (big speedup on fixed shapes).
+    if args.get("compile"):
+        compile_mode = args.get("compile_mode", "reduce-overhead")
+        enable_compile(mode=compile_mode)
+    # Optional: allow TF32 on matmul (trades ~1e-3 per-op rel error in matmuls
+    # for a large speedup on Ampere+; has negligible impact on training metrics
+    # in practice but is opt-in since the original code set "highest").
+    if args.get("tf32"):
+        torch.set_float32_matmul_precision("high")
     # Train DLC model
-    if train_option: 
+    if train_option:
         # Save run parameters
         write_sh(args=args, timestr=timestr)
         # Initilise DLC model
-        encoder, NOD_func, decoder, optimiser, scheduler = initialise_DLC_model(in_dim, hid_dim, nAgent, nOpinion, nDim, dOrder, device, learning_rate, scheduler_step, scheduler_gamma, arch, activation)
+        encoder, NOD_func, decoder, optimiser, scheduler = initialise_DLC_model(in_dim, hid_dim, nAgent, nOpinion, nDim, dOrder, device, learning_rate, scheduler_step, scheduler_gamma, arch, activation, weight_decay)
         # Train DLC model
         train(epoch, data_offset, dt, nAgent, nOpinion, nDim, dOrder, batch_size, encoder, NOD_func, decoder, optimiser, scheduler, train_loader, valid_loader, timestr, dataset_name, inverse)
     # Test DLC model
@@ -112,11 +122,13 @@ if __name__ == "__main__":
     options = argparse.ArgumentParser()
     # Learning parameter
     options.add_argument("--seed", type=int, default=72)
-    options.add_argument("--arch", type=str, default='MPNN')
-    options.add_argument("--epoch", type=int, default=100)
+    options.add_argument("--arch", type=str, default='DLCMLP')
+    options.add_argument("--epoch", type=int, default=1000)
     options.add_argument("--learning_rate", type=float, default=1E-3)
-    options.add_argument("--batch_size", type=int, default=16)
-    options.add_argument("--scheduler_step", type=int, default=20)
+    options.add_argument("--weight_decay", type=float, default=0.0,
+                         help="AdamW decoupled weight decay (0.0 = plain Adam)")
+    options.add_argument("--batch_size", type=int, default=256)
+    options.add_argument("--scheduler_step", type=int, default=200)
     options.add_argument("--scheduler_gamma", type=float, default=0.1)
     options.add_argument("--activation", type=str, default='tanh')
     options.add_argument("--num_worker", type=int, default=24)
@@ -125,12 +137,19 @@ if __name__ == "__main__":
     options.add_argument("--train_set", type=int, default=50000)
     options.add_argument("--test_folder", type=str, default=str())
     # Run options
-    options.add_argument("--train", type=int, default=1)
-    options.add_argument("--test", type=int, default=1)
-    options.add_argument("--hid_dim", type=int, default=128)
+    options.add_argument("--train", type=int, default=0)
+    options.add_argument("--test", type=int, default=0)
+    options.add_argument("--hid_dim", type=int, default=256)
     options.add_argument("--nOpinion", type=int, default=2)
     options.add_argument("--dOrder", type=int, default=2)
     options.add_argument("--inverse", type=int, default=0)
+    # Performance options (opt-in; default off to match prior behaviour).
+    options.add_argument("--compile", type=int, default=0,
+                         help="1 = wrap DLC_unroll with torch.compile (needs PyTorch >= 2.0)")
+    options.add_argument("--compile_mode", type=str, default="default",
+                         help="torch.compile mode: default (recommended) | reduce-overhead | max-autotune")
+    options.add_argument("--tf32", type=int, default=0,
+                         help="1 = enable TF32 matmul (Ampere+); faster, ~1e-3 rel error per matmul")
     # Parse arguements
     args = vars(options.parse_args())
     # Train neural net

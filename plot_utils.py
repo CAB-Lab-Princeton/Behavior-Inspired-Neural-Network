@@ -375,6 +375,211 @@ def plot_test_kuramoto(test_loader, state_tpn_dlc, z_tpn_dlc, b_tpn_dlc, dt, sel
     Html_file.write(html_str)
     Html_file.close()
 
+def plot_test_trajnet(test_loader, state_tpn_dlc, z_tpn_dlc, b_tpn_dlc, dt, selected_trajectory, timestr):
+    # Extract ground truth data
+    state_input_test_batch, state_output_test_batch = next(iter(test_loader))
+    # Initialise plot
+    fig = plt.figure(figsize=(18, 10), dpi=100)
+    # Initialise time for plotting
+    time = np.linspace(1, len(state_output_test_batch[0, 0::20]), len(state_output_test_batch[0, 0::20]))
+    # Plot state space prediction
+    plt.subplot(1, 2, 1)
+    plt.plot(state_tpn_dlc[selected_trajectory, 0::20][0:14].cpu().detach().numpy(), state_tpn_dlc[selected_trajectory, 5::20][0:14].cpu().detach().numpy(), color='C0')
+    plt.scatter(state_tpn_dlc[selected_trajectory, 0::20][0:14].cpu().detach().numpy(), state_tpn_dlc[selected_trajectory, 5::20][0:14].cpu().detach().numpy(), color='C0')
+    plt.scatter(state_tpn_dlc[selected_trajectory, 0].cpu().detach().numpy(), state_tpn_dlc[selected_trajectory, 5].cpu().detach().numpy(), color='C9')
+    # plt.plot(state_tpn_dlc[selected_trajectory, 1::20].cpu().detach().numpy(), state_tpn_dlc[selected_trajectory, 6::20].cpu().detach().numpy(), color='C1')
+    # plt.plot(state_tpn_dlc[selected_trajectory, 2::20].cpu().detach().numpy(), state_tpn_dlc[selected_trajectory, 7::20].cpu().detach().numpy(), color='C2')
+    # plt.plot(state_tpn_dlc[selected_trajectory, 3::20].cpu().detach().numpy(), state_tpn_dlc[selected_trajectory, 8::20].cpu().detach().numpy(), color='C3')
+    # plt.plot(state_tpn_dlc[selected_trajectory, 4::20].cpu().detach().numpy(), state_tpn_dlc[selected_trajectory, 9::20].cpu().detach().numpy(), color='C4')
+    # plt.scatter(state_input_test_batch[selected_trajectory, 0].cpu().detach().numpy(), state_input_test_batch[selected_trajectory, 5].cpu().detach().numpy(), color='C0')
+    # plt.plot(state_output_test_batch[selected_trajectory, 0::20].cpu().detach().numpy(), state_output_test_batch[selected_trajectory, 5::20].cpu().detach().numpy(), color='C0', linestyle='dashed')
+    # plt.scatter(state_input_test_batch[selected_trajectory, 1].cpu().detach().numpy(), state_input_test_batch[selected_trajectory, 6].cpu().detach().numpy(), color='C1')
+    # plt.plot(state_output_test_batch[selected_trajectory, 1::20].cpu().detach().numpy(), state_output_test_batch[selected_trajectory, 6::20].cpu().detach().numpy(), color='C1', linestyle='dashed')
+    # plt.scatter(state_input_test_batch[selected_trajectory, 2].cpu().detach().numpy(), state_input_test_batch[selected_trajectory, 7].cpu().detach().numpy(), color='C2')
+    # plt.plot(state_output_test_batch[selected_trajectory, 2::20].cpu().detach().numpy(), state_output_test_batch[selected_trajectory, 7::20].cpu().detach().numpy(), color='C2', linestyle='dashed')
+    # plt.scatter(state_input_test_batch[selected_trajectory, 3].cpu().detach().numpy(), state_input_test_batch[selected_trajectory, 8].cpu().detach().numpy(), color='C3')
+    # plt.plot(state_output_test_batch[selected_trajectory, 3::20].cpu().detach().numpy(), state_output_test_batch[selected_trajectory, 8::20].cpu().detach().numpy(), color='C3', linestyle='dashed')
+    # plt.scatter(state_input_test_batch[selected_trajectory, 4].cpu().detach().numpy(), state_input_test_batch[selected_trajectory, 9].cpu().detach().numpy(), color='C4')
+    # plt.plot(state_output_test_batch[selected_trajectory, 4::20].cpu().detach().numpy(), state_output_test_batch[selected_trajectory, 9::20].cpu().detach().numpy(), color='C4', linestyle='dashed')
+    plt.title("Learned (Solid) and Ground Truth (Dashed)")
+    plt.ylabel("$y$")
+    plt.xlabel("$x$")
+    # Plot latent space prediction
+    plt.subplot(2, 4, 3)
+    plt.plot(time, z_tpn_dlc[selected_trajectory, 0::20].cpu().detach().numpy(), color='C0')
+    # plt.plot(time, z_tpn_dlc[selected_trajectory, 4::20].cpu().detach().numpy(), color='C1')
+    # plt.plot(time, z_tpn_dlc[selected_trajectory, 8::20].cpu().detach().numpy(), color='C2')
+    # plt.plot(time, z_tpn_dlc[selected_trajectory, 12::20].cpu().detach().numpy(), color='C3')
+    # plt.plot(time, z_tpn_dlc[selected_trajectory, 16::20].cpu().detach().numpy(), color='C4')
+    plt.ylim([-0.5, 0.5])
+    plt.title("$z_{i1}$")
+    plt.xlabel("$t$")
+    plt.subplot(2, 4, 7)
+    plt.plot(time[0:14], z_tpn_dlc[selected_trajectory, 0::20][0:14].cpu().detach().numpy(), color='C0')
+    plt.plot(time[0:14], z_tpn_dlc[selected_trajectory, 1::20][0:14].cpu().detach().numpy(), color='C1')
+    plt.plot(time[0:14], z_tpn_dlc[selected_trajectory, 2::20][0:14].cpu().detach().numpy(), color='C2')
+    plt.plot(time[0:14], z_tpn_dlc[selected_trajectory, 3::20][0:14].cpu().detach().numpy(), color='C3')
+    # plt.plot(time, z_tpn_dlc[selected_trajectory, 5::20].cpu().detach().numpy(), color='C1')
+    # plt.plot(time, z_tpn_dlc[selected_trajectory, 9::20].cpu().detach().numpy(), color='C2')
+    # plt.plot(time, z_tpn_dlc[selected_trajectory, 13::20].cpu().detach().numpy(), color='C3')
+    # plt.plot(time, z_tpn_dlc[selected_trajectory, 17::20].cpu().detach().numpy(), color='C4')
+    # plt.ylim([-0.5, 0.5])
+    plt.title("$z_{i2}$")
+    plt.xlabel("$t$")
+    plt.subplot(2, 4, 4)
+    plt.plot(time, z_tpn_dlc[selected_trajectory, 2::20].cpu().detach().numpy(), color='C0')
+    plt.plot(time, z_tpn_dlc[selected_trajectory, 3::20].cpu().detach().numpy(), color='C1')
+    # plt.plot(time, z_tpn_dlc[selected_trajectory, 6::20].cpu().detach().numpy(), color='C1')
+    # plt.plot(time, z_tpn_dlc[selected_trajectory, 10::20].cpu().detach().numpy(), color='C2')
+    # plt.plot(time, z_tpn_dlc[selected_trajectory, 14::20].cpu().detach().numpy(), color='C3')
+    # plt.plot(time, z_tpn_dlc[selected_trajectory, 18::20].cpu().detach().numpy(), color='C4')
+    plt.ylim([-0.5, 0.5])
+    plt.title("$z_{i3}$")
+    plt.xlabel("$t$")
+    plt.subplot(2, 4, 8)
+    plt.plot(time, z_tpn_dlc[selected_trajectory, 3::20].cpu().detach().numpy(), color='C0')
+    # plt.plot(time, z_tpn_dlc[selected_trajectory, 7::20].cpu().detach().numpy(), color='C1')
+    # plt.plot(time, z_tpn_dlc[selected_trajectory, 11::20].cpu().detach().numpy(), color='C2')
+    # plt.plot(time, z_tpn_dlc[selected_trajectory, 15::20].cpu().detach().numpy(), color='C3')
+    # plt.plot(time, z_tpn_dlc[selected_trajectory, 19::20].cpu().detach().numpy(), color='C4')
+    plt.ylim([-0.5, 0.5])
+    plt.title("$z_{i4}$")
+    plt.xlabel("$t$")
+    # Save testing plot PNG
+    savepath = 'Model/' + timestr + "/Testing.png"
+    plt.savefig(savepath)
+    # Save testing plot HTML
+    savepath = 'Model/' + timestr + "/Testing.html"
+    html_str = mpld3.fig_to_html(fig)
+    Html_file= open(savepath, "w")
+    Html_file.write(html_str)
+    Html_file.close()
+
+def plot_test_NBA(test_loader, state_tpn_dlc, z_tpn_dlc, b_tpn_dlc, dt, selected_trajectory, timestr):
+    # Extract ground truth data
+    state_input_test_batch, state_output_test_batch = next(iter(test_loader))
+    # Initialise plot
+    fig = plt.figure(figsize=(8, 4), dpi=300)
+    # Initialise time for plotting
+    time = np.linspace(0, len(state_output_test_batch[0, 0::20])-1, len(state_output_test_batch[0, 0::20]))
+    # # Plot state space prediction
+    # for i in range(5):
+    #     loop_color = "C0"
+    #     plt.plot(state_tpn_dlc[selected_trajectory, 0+i::40].cpu().detach().numpy(), state_tpn_dlc[selected_trajectory, 11+i::40].cpu().detach().numpy(), color=loop_color)
+    #     plt.plot(state_output_test_batch[selected_trajectory, 0+i::40].cpu().detach().numpy(), state_output_test_batch[selected_trajectory, 11+i::40].cpu().detach().numpy(), color=loop_color, linestyle='dashed')
+    # for i in range(5):
+    #     loop_color = "C1"
+    #     plt.plot(state_tpn_dlc[selected_trajectory, 5+i::40].cpu().detach().numpy(), state_tpn_dlc[selected_trajectory, 16+i::40].cpu().detach().numpy(), color=loop_color)
+    #     plt.plot(state_output_test_batch[selected_trajectory, 5+i::40].cpu().detach().numpy(), state_output_test_batch[selected_trajectory, 16+i::40].cpu().detach().numpy(), color=loop_color, linestyle='dashed')
+    # plt.title("Learned (Solid) and Ground Truth (Dashed)")
+    # plt.ylabel("$y$")
+    # plt.xlabel("$x$")
+    # # Save testing plot PNG
+    # savepath = 'Model/' + timestr + "/Testing.png"
+    # plt.savefig(savepath)
+    # # Save testing plot HTML
+    # savepath = 'Model/' + timestr + "/Testing.html"
+    # html_str = mpld3.fig_to_html(fig)
+    # Html_file= open(savepath, "w")
+    # Html_file.write(html_str)
+    # Html_file.close()
+
+    # selected_trajectory = 10
+    # plt.subplot(1, 2, 1)
+    # plt.scatter(state_output_test_batch[selected_trajectory, 0].cpu().detach().numpy(), state_output_test_batch[selected_trajectory, 11].cpu().detach().numpy(), color='C0', marker='s')
+    # plt.plot(state_output_test_batch[selected_trajectory, 0::44].cpu().detach().numpy(), state_output_test_batch[selected_trajectory, 11::44].cpu().detach().numpy(), color='C0')
+    # plt.scatter(state_output_test_batch[selected_trajectory, 0::44].cpu().detach().numpy(), state_output_test_batch[selected_trajectory, 11::44].cpu().detach().numpy(), color='C0')
+    # i = 2
+    # plt.scatter(state_output_test_batch[selected_trajectory, 0+44*(i+1)].cpu().detach().numpy(), state_output_test_batch[selected_trajectory, 11+44*(i+1)].cpu().detach().numpy(), color='k', marker='s')
+    # plt.title("Observation Space", fontsize=22.0)
+    # plt.ylabel("$y$")
+    # # plt.xlabel("$x$")
+    # cb_handles = [
+    #     Line2D([0], [0], color="C0", marker='o', label='Start', lw=0),
+    #     Line2D([0], [0], color="k", marker='s', label='Switch', lw=0)
+    # ]
+    # plt.legend(handles=cb_handles, loc="lower left")
+    # # Latent space
+    # plt.subplot(1, 2, 2)
+    # plt.plot(z_tpn_dlc[selected_trajectory, 2::44].cpu().detach().numpy())
+    # plt.plot(z_tpn_dlc[selected_trajectory, 3::44].cpu().detach().numpy())
+    # plt.plot(z_tpn_dlc[selected_trajectory, 0::44].cpu().detach().numpy())
+    # plt.plot(z_tpn_dlc[selected_trajectory, 1::44].cpu().detach().numpy())
+    # plt.title("Latent Space", fontsize=22.0)
+    # plt.fill_between(time[0:i+1], z_tpn_dlc[selected_trajectory, 0::44][0:i+1].cpu().detach().numpy(), z_tpn_dlc[selected_trajectory, 1::44][0:i+1].cpu().detach().numpy(), color='red', alpha=0.2)
+    # plt.fill_between(time[i:12+1], z_tpn_dlc[selected_trajectory, 1::44][i:12+1].cpu().detach().numpy(), z_tpn_dlc[selected_trajectory, 0::44][i:12+1].cpu().detach().numpy(), color='green', alpha=0.2)
+    # plt.xticks([0, 4, 8, 12])
+    # plt.legend(["$z_{i1}$", "$z_{i2}$", "$z_{i3}$", "$z_{i4}$"], loc='lower right')
+    # # plt.xlabel("$t$")
+    # plt.ylabel("Preference")
+    # plt.axvline(i, linestyle='dashed', color='black')
+    # savepath = 'Model/' + timestr + "/Int.pdf"
+    # plt.tight_layout(h_pad=2)
+    # plt.savefig(savepath, bbox_inches='tight')
+
+    # # Add additional plot for interpretability
+    selected_trajectory = 9
+    # selected_trajectory = 10
+    plt.subplot(1, 2, 1)
+    plt.scatter(state_output_test_batch[selected_trajectory, 0].cpu().detach().numpy(), state_output_test_batch[selected_trajectory, 11].cpu().detach().numpy(), color='C0', marker='s')
+    plt.plot(state_output_test_batch[selected_trajectory, 0::44].cpu().detach().numpy(), state_output_test_batch[selected_trajectory, 11::44].cpu().detach().numpy(), color='C0')
+    plt.scatter(state_output_test_batch[selected_trajectory, 0::44].cpu().detach().numpy(), state_output_test_batch[selected_trajectory, 11::44].cpu().detach().numpy(), color='C0')
+    i = 5
+    plt.scatter(state_output_test_batch[selected_trajectory, 0+44*i].cpu().detach().numpy(), state_output_test_batch[selected_trajectory, 11+44*i].cpu().detach().numpy(), color='k', marker='s')
+    # plt.title("Observation Space")
+    plt.ylabel("$y$")
+    plt.xlabel("$x$")
+    cb_handles = [
+        Line2D([0], [0], color="C0", marker='o', label='Start', lw=0),
+        Line2D([0], [0], color="k", marker='s', label='Switch', lw=0)
+    ]
+    plt.legend(handles=cb_handles, loc="lower left")
+    # Latent space
+    plt.subplot(1, 2, 2)
+    plt.plot(z_tpn_dlc[selected_trajectory, 3::44].cpu().detach().numpy())
+    plt.plot(z_tpn_dlc[selected_trajectory, 0::44].cpu().detach().numpy())
+    plt.plot(z_tpn_dlc[selected_trajectory, 1::44].cpu().detach().numpy())
+    plt.plot(z_tpn_dlc[selected_trajectory, 2::44].cpu().detach().numpy())
+    # plt.title("Latent Space")
+    plt.fill_between(time[0:i+1], z_tpn_dlc[selected_trajectory, 0::44][0:i+1].cpu().detach().numpy(), z_tpn_dlc[selected_trajectory, 3::44][0:i+1].cpu().detach().numpy(), color='red', alpha=0.2)
+    plt.fill_between(time[i:12+1], z_tpn_dlc[selected_trajectory, 3::44][i:12+1].cpu().detach().numpy(), z_tpn_dlc[selected_trajectory, 0::44][i:12+1].cpu().detach().numpy(), color='green', alpha=0.2)
+    plt.xticks([0, 4, 8, 12])
+    plt.legend(["$z_{i1}$", "$z_{i2}$", "$z_{i3}$", "$z_{i4}$"], loc='lower right')
+    plt.xlabel("$t$")
+    plt.ylabel("Preference")
+    plt.axvline(i, linestyle='dashed', color='black')
+    savepath = 'Model/' + timestr + "/Int2.pdf"
+    plt.tight_layout(h_pad=2)
+    plt.savefig(savepath, bbox_inches='tight')
+
+    # # Plot state space prediction
+    # plt.subplot(1, 2, 1)
+    # plt.plot(state_tpn_dlc[selected_trajectory, 0::20][0:14].cpu().detach().numpy(), state_tpn_dlc[selected_trajectory, 5::20][0:14].cpu().detach().numpy(), color='C0')
+    # plt.scatter(state_tpn_dlc[selected_trajectory, 0::20][0:14].cpu().detach().numpy(), state_tpn_dlc[selected_trajectory, 5::20][0:14].cpu().detach().numpy(), color='C0')
+    # plt.scatter(state_tpn_dlc[selected_trajectory, 0].cpu().detach().numpy(), state_tpn_dlc[selected_trajectory, 5].cpu().detach().numpy(), color='C0', marker='s')
+    # plt.plot(state_tpn_dlc[selected_trajectory, 0::20][4].cpu().detach().numpy(), state_tpn_dlc[selected_trajectory, 5::20][4].cpu().detach().numpy(), color='k', marker='s')
+    # plt.title("Observation Space")
+    # plt.ylabel("$y$")
+    # plt.xlabel("$x$")
+    # # Plot latent space prediction
+    # plt.subplot(1, 2, 2)
+    # plt.plot(time[0:14], z_tpn_dlc[selected_trajectory, 0::20][0:14].cpu().detach().numpy(), color='C0')
+    # plt.plot(time[0:14], z_tpn_dlc[selected_trajectory, 1::20][0:14].cpu().detach().numpy(), color='C1')
+    # plt.plot(time[0:14], z_tpn_dlc[selected_trajectory, 2::20][0:14].cpu().detach().numpy(), color='C2')
+    # plt.plot(time[0:14], z_tpn_dlc[selected_trajectory, 3::20][0:14].cpu().detach().numpy(), color='C3')
+    # plt.axvline(5, color='k', linewidth=0.5, linestyle='--')
+    # plt.fill_between(time[0:5], z_tpn_dlc[selected_trajectory, 0::20][0:5].cpu().detach().numpy(), z_tpn_dlc[selected_trajectory, 1::20][0:5].cpu().detach().numpy(), color='red', alpha=0.2)
+    # plt.fill_between(time[4:14], z_tpn_dlc[selected_trajectory, 0::20][4:14].cpu().detach().numpy(), z_tpn_dlc[selected_trajectory, 1::20][4:14].cpu().detach().numpy(), color='green', alpha=0.2)
+    # plt.xticks([0, 5, 10, 15])
+    # plt.title("Latent Space")
+    # plt.legend(["$z_{i1}$", "$z_{i2}$", "$z_{i3}$", "$z_{i4}$"], loc='lower right')
+    # plt.xlabel("$t$")
+    # plt.ylabel("Preference")
+    # # Save testing plot PNG
+    # savepath = 'Model/' + timestr + "/Testing.pdf"
+    # plt.tight_layout(h_pad=2)
+    # plt.savefig(savepath, bbox_inches='tight')
+
 def plot_test(model_name, test_loader, state_tpn_dlc, z_tpn_dlc, b_tpn_dlc, dt, selected_trajectory, timestr):
     if model_name == "IP":
         plot_test_pendulum(test_loader, state_tpn_dlc, z_tpn_dlc, b_tpn_dlc, dt, selected_trajectory, timestr)
@@ -384,6 +589,11 @@ def plot_test(model_name, test_loader, state_tpn_dlc, z_tpn_dlc, b_tpn_dlc, dt, 
         plot_test_spring(test_loader, state_tpn_dlc, z_tpn_dlc, b_tpn_dlc, dt, selected_trajectory, timestr)
     if model_name == "KM5":
         plot_test_kuramoto(test_loader, state_tpn_dlc, z_tpn_dlc, b_tpn_dlc, dt, selected_trajectory, timestr)
+    if model_name == "TR5":
+        plot_test_trajnet(test_loader, state_tpn_dlc, z_tpn_dlc, b_tpn_dlc, dt, selected_trajectory, timestr)
+        plot_test_grid(test_loader, state_tpn_dlc, z_tpn_dlc, b_tpn_dlc, dt, selected_trajectory, timestr)
+    if model_name == "NBA":
+        plot_test_NBA(test_loader, state_tpn_dlc, z_tpn_dlc, b_tpn_dlc, dt, selected_trajectory, timestr)
 
 def plot_test_grid(test_loader, state_tpn_dlc, z_tpn_dlc, b_tpn_dlc, dt, selected_trajectory, timestr):
     # Extract ground truth data
